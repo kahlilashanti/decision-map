@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Decision Map for Zion</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  :root{--bg:#141733;--panel:#1d2148;--line:#3b4280;--gold:#ffd166}
+  html,body{height:100%;margin:0}
+  body{display:flex;flex-direction:column;background:var(--bg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+  .navbar{background:var(--panel);border-bottom:1px solid var(--line)}
+  #viewport{flex:1;overflow:auto;position:relative;cursor:grab}
+  #viewport:active{cursor:grabbing}
+  #board{position:relative;width:2600px;height:1700px;background-image:radial-gradient(#2c3270 1.4px,transparent 1.4px);background-size:28px 28px}
+  #edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+  .edge .vis{stroke:#8b93b8;stroke-width:2.5;fill:none}
+  .edge.sel .vis{stroke:var(--gold);stroke-width:3.5}
+  .edge .hit{stroke:transparent;stroke-width:18;pointer-events:stroke;cursor:pointer}
+  .lbl{font:700 14px system-ui;fill:#fff;paint-order:stroke;stroke:var(--bg);stroke-width:6px;text-anchor:middle;dominant-baseline:middle}
+  .lbl.yes{fill:#4ade80}.lbl.no{fill:#ff6b86}
+
+  .node{position:absolute;min-width:130px;max-width:220px;padding:10px 14px;border-radius:14px;cursor:grab;user-select:none;
+    display:flex;gap:8px;align-items:center;font-size:.95rem;line-height:1.25;border:2px solid transparent;
+    box-shadow:0 6px 18px #0007;transition:box-shadow .15s,transform .15s}
+  .node:hover{transform:translateY(-2px)}
+  .node.dragging{cursor:grabbing;transform:scale(1.05) rotate(-1.5deg);z-index:50;box-shadow:0 18px 34px #000a}
+  .node.pop{animation:pop .35s ease-out}
+  .node.sel{border-color:var(--gold);box-shadow:0 0 0 5px #ffd16633,0 10px 26px #0009}
+  .txt{outline:none;word-break:break-word}
+  .txt[contenteditable=true]{user-select:text;cursor:text;background:#0004;border-radius:6px;padding:0 4px}
+  .node.option{background:linear-gradient(135deg,#2f6bff,#7a4dff);font-weight:600;min-width:200px}
+  .node.pro{background:#123a2c;border-color:#2ecc71}
+  .node.con{background:#43182a;border-color:#ff5c7a}
+  .node.note{background:#3a3520;border:2px dashed var(--gold)}
+  .node.decision{width:280px;min-height:150px;max-width:none;justify-content:center;text-align:center;
+    background:none;border:0;box-shadow:none;padding:0 62px;font-weight:700;isolation:isolate;filter:drop-shadow(0 8px 14px #0008)}
+  .node.decision::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(135deg,#ff4d8d,#8a4dff);
+    clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
+  .node.decision.sel{filter:drop-shadow(0 0 10px var(--gold))}
+  .node.decision .ico{display:none}
+  .wt{margin-left:auto;background:#0005;color:var(--gold);border-radius:10px;padding:0 8px;font-size:.8rem;font-weight:700;cursor:pointer;transition:transform .12s}
+  .wt:hover{transform:scale(1.2)}
+
+  body.connecting .node{cursor:crosshair;animation:pulse 1s infinite}
+  #bar{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;padding:8px 12px;display:flex;gap:8px;align-items:center;z-index:100;box-shadow:0 12px 30px #000a}
+  #toasts{z-index:2100}
+  .toast{background:var(--panel);border:1px solid var(--line);color:#fff}
+  .toast.win{border-color:var(--gold);box-shadow:0 0 18px #ffd16655}
+  #confetti{position:fixed;inset:0;pointer-events:none;z-index:2000}
+  .coin{display:inline-block;font-size:2rem;animation:spin .9s ease-in-out}
+  @keyframes spin{to{transform:rotateY(1080deg)}}
+  @keyframes pop{0%{transform:scale(.3);opacity:0}70%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
+  @keyframes pulse{50%{box-shadow:0 0 0 6px #ffd16655}}
+  @media (prefers-reduced-motion:reduce){.node,.node.pop,body.connecting .node,.coin{animation:none;transition:none}}
+</style>
+</head>
+<body>
+
+<nav class="navbar px-3 py-2 gap-3 flex-nowrap">
+  <span class="navbar-brand mb-0 fw-bold text-nowrap">🧭 Decision Map</span>
+  <div class="btn-group btn-group-sm" id="adders">
+    <button class="btn btn-outline-light" data-add="decision">◆ Decision</button>
+    <button class="btn btn-outline-light" data-add="option">🛣️ Option</button>
+    <button class="btn btn-outline-light" data-add="pro">👍 Pro</button>
+    <button class="btn btn-outline-light" data-add="con">👎 Con</button>
+    <button class="btn btn-outline-light" data-add="note">📝 Note</button>
+  </div>
+  <div class="ms-auto d-flex align-items-center gap-3">
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge text-bg-warning text-nowrap" id="lvl"></span>
+      <div class="progress" style="width:120px;height:10px"><div class="progress-bar bg-warning" id="xpbar"></div></div>
+      <small class="text-secondary text-nowrap" id="xpTxt"></small>
+    </div>
+    <button class="btn btn-sm btn-success" id="verdictBtn">⚖️ Verdict</button>
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-light dropdown-toggle" data-bs-toggle="dropdown">Menu</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><button class="dropdown-item" data-menu="help">How to use</button></li>
+        <li><button class="dropdown-item" data-menu="export">Export JSON</button></li>
+        <li><button class="dropdown-item" data-menu="import">Import JSON</button></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><button class="dropdown-item" data-menu="sample">Load sample</button></li>
+        <li><button class="dropdown-item text-danger" data-menu="clear">Clear board</button></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div id="viewport"><div id="board"><svg id="edges"></svg></div></div>
+<div id="bar" class="d-none"></div>
+<div id="toasts" class="toast-container position-fixed bottom-0 end-0 p-3"></div>
+<canvas id="confetti"></canvas>
+<input type="file" id="file" accept=".json" hidden>
+
+<div class="modal fade" id="vModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title">⚖️ The Verdict</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body" id="vBody"></div>
+  <div class="modal-footer justify-content-between">
+    <div id="coinRes" class="small"></div>
+    <button class="btn btn-outline-warning btn-sm" id="flipBtn">🪙 Gut-check coin flip</button>
+  </div>
+</div></div></div>
+
+<div class="modal fade" id="hModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title">How to use</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body">
+    <ul class="mb-0">
+      <li>Drag cards to move them. Drag empty space to pan.</li>
+      <li>Double-click a card to edit its text.</li>
+      <li>Select a card, then add a Pro, Con, Option or Note. It links automatically.</li>
+      <li>Click a ★ badge to change a pro or con weight (1 to 5).</li>
+      <li>Selected card: change type, Connect, Duplicate, or Delete.</li>
+      <li>Click an arrow to add Yes / No labels, flip it, or delete it.</li>
+      <li>Delete key removes the selection. Esc cancels.</li>
+      <li>Verdict scores each Option: pro weights minus con weights.</li>
+      <li>Everything saves in this browser. Use Export to back up.</li>
+    </ul>
+  </div>
+</div></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const rand = (a, b) => Math.random() * (b - a) + a;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const KEY = 'decisionMap.v1';
+const TYPES = {
+  decision: {icon: '◆', label: 'Decision', text: 'New decision?'},
+  option:   {icon: '🛣️', label: 'Option',   text: 'New option'},
+  pro:      {icon: '👍', label: 'Pro',      text: 'New pro'},
+  con:      {icon: '👎', label: 'Con',      text: 'New con'},
+  note:     {icon: '📝', label: 'Note',     text: 'Note'}
+};
+const TITLES = ['Rookie', 'Scout', 'Strategist', 'Tactician', 'Captain', 'Mastermind', 'Legend'];
+
+function template() {
+  const s = {nodes: [], edges: [], seq: 1};
+  const add = (type, text, x, y, w = 3) => { const id = 'n' + s.seq++; s.nodes.push({id, type, text, x, y, w}); return id; };
+  const link = (a, b) => s.edges.push({id: 'e' + s.seq++, from: a, to: b, label: ''});
+  const d = add('decision', 'What do I do after graduating?', 740, 50);
+  [
+    ['Summer off, play soccer in Europe', 200,
+      [['Play at a high level abroad', 4], ['Build a network in Europe', 3], ['Life experience', 3]],
+      [['Costs money, earns none', 4], ['Delays school and career', 3]]],
+    ['Go straight into university', 760,
+      [['Momentum, stay on track', 4], ['Campus soccer and scholarship chances', 3], ['Friends and structure', 2]],
+      [['Big commitment, major unclear', 3], ['Tuition and debt start now', 3]]],
+    ['Gap year: work and save for pilot lessons', 1320,
+      [['Money saved for pilot training', 5], ['Work experience and maturity', 3], ['Time to test the pilot dream', 4]],
+      [['Friends move ahead', 2], ['Hard to restart study habits', 3]]]
+  ].forEach(([t, x, pros, cons]) => {
+    const o = add('option', t, x, 300);
+    link(d, o);
+    pros.forEach(([p, w], i) => link(o, add('pro', p, x - 140, 480 + i * 90, w)));
+    cons.forEach(([c, w], i) => link(o, add('con', c, x + 100, 480 + i * 90, w)));
+  });
+  return s;
+}
+const fresh = () => ({...template(), xp: 0, ach: [], stats: {added: 0, linked: 0}});
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY));
+    return s && Array.isArray(s.nodes) && Array.isArray(s.edges) ? {xp: 0, ach: [], stats: {added: 0, linked: 0}, ...s} : null;
+  } catch { return null; }
+}
+const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+
+let S = load() || fresh();
+let selected = null, connectFrom = null, drag = null;
+const board = $('#board'), svg = $('#edges'), viewport = $('#viewport');
+const byId = id => S.nodes.find(n => n.id === id);
+const nb = o => S.edges.flatMap(e => e.from === o.id ? [e.to] : e.to === o.id ? [e.from] : []).map(byId).filter(Boolean);
+
+/* ---------- toasts, XP, achievements, confetti ---------- */
+function toast(msg, icon = '✨', kind = '') {
+  const el = document.createElement('div');
+  el.className = 'toast align-items-center border-0 ' + kind;
+  el.innerHTML = `<div class="d-flex"><div class="toast-body"><span class="me-2">${icon}</span>${esc(msg)}</div><button class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+  $('#toasts').appendChild(el);
+  el.addEventListener('hidden.bs.toast', () => el.remove());
+  new bootstrap.Toast(el, {delay: kind === 'win' ? 4000 : 2400}).show();
+}
+const lvl = () => Math.floor(S.xp / 100) + 1;
+function hud() {
+  $('#lvl').textContent = `Lv ${lvl()} ${TITLES[Math.min(lvl() - 1, TITLES.length - 1)]}`;
+  $('#xpbar').style.width = (S.xp % 100) + '%';
+  $('#xpTxt').textContent = S.xp + ' XP';
+}
+function addXP(n, msg) {
+  const before = lvl();
+  S.xp += n;
+  toast(`${msg}  +${n} XP`);
+  if (lvl() > before) { toast(`Level up! You're now a ${TITLES[Math.min(lvl() - 1, TITLES.length - 1)]}`, '🏆', 'win'); confetti(90); }
+  hud(); checkAch(); persist();
+}
+function unlock(id, title, icon) {
+  if (S.ach.includes(id)) return;
+  S.ach.push(id); S.xp += 25;
+  toast(`Achievement: ${title}  +25 XP`, icon, 'win'); confetti(70); hud(); persist();
+}
+function checkAch() {
+  const st = S.stats;
+  if (st.added >= 1) unlock('day1', 'Day One', '🌱');
+  if (st.linked >= 3) unlock('web', 'Web Weaver', '🕸️');
+  if (st.added >= 10) unlock('over', 'Overthinker', '🧠');
+  if (S.nodes.some(o => o.type === 'option' && ['pro', 'con'].every(t => nb(o).filter(n => n.type === t).length >= 3))) unlock('fair', 'Fair Fight', '⚖️');
+}
+const cv = $('#confetti'), cx = cv.getContext('2d');
+let parts = [], raf = 0;
+function confetti(n = 100) {
+  cv.width = innerWidth; cv.height = innerHeight;
+  for (let i = 0; i < n; i++) parts.push({x: innerWidth / 2, y: innerHeight / 3, vx: rand(-9, 9), vy: rand(-15, -3), s: rand(6, 11),
+    c: `hsl(${rand(0, 360)},90%,60%)`, r: rand(0, 6), vr: rand(-.3, .3), life: 130});
+  if (!raf) raf = requestAnimationFrame(loop);
+}
+function loop() {
+  cx.clearRect(0, 0, cv.width, cv.height);
+  parts = parts.filter(p => p.life > 0);
+  parts.forEach(p => {
+    p.x += p.vx; p.y += p.vy; p.vy += .35; p.r += p.vr; p.life--;
+    cx.save(); cx.translate(p.x, p.y); cx.rotate(p.r); cx.fillStyle = p.c; cx.globalAlpha = Math.min(1, p.life / 30);
+    cx.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * .6); cx.restore();
+  });
+  raf = parts.length ? requestAnimationFrame(loop) : 0;
+  if (!raf) cx.clearRect(0, 0, cv.width, cv.height);
+}
+
+/* ---------- rendering ---------- */
+function render(popId) {
+  board.querySelectorAll('.node').forEach(e => e.remove());
+  S.nodes.forEach(n => {
+    const el = document.createElement('div');
+    el.className = 'node ' + n.type;
+    el.dataset.id = n.id;
+    el.style.left = n.x + 'px'; el.style.top = n.y + 'px';
+    const weighted = n.type === 'pro' || n.type === 'con';
+    el.innerHTML = `<span class="ico">${TYPES[n.type].icon}</span><span class="txt"></span>` +
+      (weighted ? `<span class="wt" title="Click to change weight">★${n.w || 3}</span>` : '');
+    el.querySelector('.txt').textContent = n.text;
+    if (n.id === popId) el.classList.add('pop');
+    if (selected && selected.kind === 'node' && selected.id === n.id) el.classList.add('sel');
+    board.appendChild(el);
+  });
+  drawEdges(); refreshBar();
+}
+function box(n) {
+  const el = board.querySelector(`.node[data-id="${n.id}"]`);
+  return {cx: n.x + el.offsetWidth / 2, cy: n.y + el.offsetHeight / 2, hw: el.offsetWidth / 2 + 4, hh: el.offsetHeight / 2 + 4, diamond: n.type === 'decision'};
+}
+function edgePt(r, dx, dy) {
+  const k = r.diamond ? 1 / (Math.abs(dx) / r.hw + Math.abs(dy) / r.hh) : Math.min(r.hw / Math.abs(dx || 1e-6), r.hh / Math.abs(dy || 1e-6));
+  return [r.cx + dx * k, r.cy + dy * k];
+}
+function drawEdges() {
+  let h = `<defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8b93b8"/></marker>
+    <marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffd166"/></marker></defs>`;
+  S.edges.forEach(ed => {
+    const a = byId(ed.from), b = byId(ed.to);
+    if (!a || !b) return;
+    const ra = box(a), rb = box(b), dx = rb.cx - ra.cx, dy = rb.cy - ra.cy;
+    if (!dx && !dy) return;
+    const [x1, y1] = edgePt(ra, dx, dy), [x2, y2] = edgePt(rb, -dx, -dy);
+    const sel = selected && selected.kind === 'edge' && selected.id === ed.id;
+    const lc = ed.label ? (/^yes$/i.test(ed.label) ? 'yes' : /^no$/i.test(ed.label) ? 'no' : '') : '';
+    h += `<g class="edge ${sel ? 'sel' : ''}" data-id="${ed.id}">
+      <line class="vis" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" marker-end="url(#${sel ? 'ahs' : 'ah'})"/>
+      <line class="hit" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>
+      ${ed.label ? `<text class="lbl ${lc}" x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2}">${esc(ed.label)}</text>` : ''}</g>`;
+  });
+  svg.innerHTML = h;
+}
+function select(sel) {
+  selected = sel;
+  board.querySelectorAll('.node').forEach(el => el.classList.toggle('sel', !!sel && sel.kind === 'node' && el.dataset.id === sel.id));
+  drawEdges(); refreshBar();
+}
+function refreshBar() {
+  const b = $('#bar');
+  if (!selected) { b.classList.add('d-none'); return; }
+  b.classList.remove('d-none');
+  const btn = (act, txt, cls = 'btn-outline-light') => `<button class="btn btn-sm ${cls}" data-act="${act}">${txt}</button>`;
+  if (selected.kind === 'node') {
+    const n = byId(selected.id);
+    b.innerHTML = `<select class="form-select form-select-sm w-auto" data-act="type">${Object.entries(TYPES).map(([k, t]) =>
+      `<option value="${k}" ${k === n.type ? 'selected' : ''}>${t.icon} ${t.label}</option>`).join('')}</select>` +
+      btn('connect', '🔗 Connect') + btn('dup', '⧉ Duplicate') + btn('del', '🗑️ Delete', 'btn-outline-danger');
+  } else {
+    b.innerHTML = btn('yes', '✅ Yes') + btn('no', '❌ No') + btn('label', '✏️ Label') + btn('clear', 'Clear') +
+      btn('flip', '⇄ Flip') + btn('del', '🗑️ Delete', 'btn-outline-danger');
+  }
+}
+
+/* ---------- actions ---------- */
+function startEdit(el) {
+  if (!el) return;
+  const t = el.querySelector('.txt'), n = byId(el.dataset.id);
+  let cancel = false;
+  t.contentEditable = 'true'; t.focus();
+  getSelection().selectAllChildren(t);
+  t.onkeydown = ev => {
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); t.blur(); }
+    if (ev.key === 'Escape') { cancel = true; t.blur(); }
+  };
+  t.onblur = () => {
+    t.contentEditable = 'false';
+    if (!cancel) n.text = t.textContent.trim() || n.text;
+    t.textContent = n.text; drawEdges(); persist();
+  };
+}
+function addNode(type) {
+  const sel = selected && selected.kind === 'node' && type !== 'decision' ? byId(selected.id) : null;
+  let x, y;
+  if (sel) {
+    const kids = S.edges.filter(e => e.from === sel.id).map(e => byId(e.to)).filter(k => k && k.type === type).length;
+    x = sel.x + (type === 'pro' ? -140 : type === 'con' ? 100 : kids * 260);
+    y = sel.y + (type === 'option' ? 250 : 180 + kids * 90);
+  } else {
+    x = viewport.scrollLeft + viewport.clientWidth / 2 - 100 + rand(-80, 80);
+    y = viewport.scrollTop + viewport.clientHeight / 2 - 40 + rand(-60, 60);
+  }
+  const n = {id: 'n' + S.seq++, type, text: TYPES[type].text, x: Math.max(0, x), y: Math.max(0, y), w: 3};
+  S.nodes.push(n);
+  if (sel) S.edges.push({id: 'e' + S.seq++, from: sel.id, to: n.id, label: ''});
+  S.stats.added++;
+  selected = {kind: 'node', id: n.id};
+  render(n.id);
+  addXP(10, `${TYPES[type].label} added${sel ? ' and linked' : ''}`);
+  startEdit(board.querySelector(`.node[data-id="${n.id}"]`));
+}
+function cancelConnect() { connectFrom = null; document.body.classList.remove('connecting'); }
+function tryConnect(toId) {
+  const from = connectFrom;
+  cancelConnect();
+  if (toId === from) return;
+  if (S.edges.some(e => (e.from === from && e.to === toId) || (e.from === toId && e.to === from))) return toast('Already linked', '🔁');
+  S.edges.push({id: 'e' + S.seq++, from, to: toId, label: ''});
+  S.stats.linked++;
+  drawEdges(); persist();
+  addXP(15, 'Linked');
+}
+function delSelected() {
+  if (!selected) return;
+  if (selected.kind === 'node') {
+    S.nodes = S.nodes.filter(n => n.id !== selected.id);
+    S.edges = S.edges.filter(e => e.from !== selected.id && e.to !== selected.id);
+  } else S.edges = S.edges.filter(e => e.id !== selected.id);
+  selected = null; render(); persist(); toast('Deleted', '🗑️');
+}
+function act(a) {
+  if (!selected) return;
+  if (a === 'del') return delSelected();
+  if (selected.kind === 'node') {
+    const n = byId(selected.id);
+    if (a === 'connect') { connectFrom = n.id; document.body.classList.add('connecting'); toast('Click the card to link to. Esc cancels.', '🔗'); }
+    if (a === 'dup') {
+      const c = {...n, id: 'n' + S.seq++, x: n.x + 30, y: n.y + 30};
+      S.nodes.push(c); S.stats.added++; selected = {kind: 'node', id: c.id}; render(c.id); persist(); toast('Duplicated', '⧉');
+    }
+  } else {
+    const ed = S.edges.find(x => x.id === selected.id);
+    if (a === 'yes') ed.label = 'Yes';
+    if (a === 'no') ed.label = 'No';
+    if (a === 'clear') ed.label = '';
+    if (a === 'label') { const v = prompt('Arrow label', ed.label); if (v !== null) ed.label = v.trim(); }
+    if (a === 'flip') [ed.from, ed.to] = [ed.to, ed.from];
+    drawEdges(); persist();
+  }
+}
+
+/* ---------- verdict ---------- */
+function verdict() {
+  const rows = S.nodes.filter(n => n.type === 'option').map(o => {
+    const sum = t => nb(o).filter(n => n.type === t).reduce((a, n) => a + (n.w || 3), 0);
+    const pro = sum('pro'), con = sum('con');
+    return {o, pro, con, net: pro - con};
+  }).sort((a, b) => b.net - a.net);
+  if (!rows.length) return toast('Add an Option card first', '⚠️');
+  const max = Math.max(1, ...rows.map(r => r.pro + r.con));
+  const tie = rows.length > 1 && rows[0].net === rows[1].net;
+  $('#vBody').innerHTML = rows.map((r, i) => `<div class="mb-3">
+    <div class="d-flex justify-content-between mb-1"><strong>${i === 0 && !tie ? '👑 ' : ''}${esc(r.o.text)}</strong>
+    <span class="badge ${r.net >= 0 ? 'text-bg-success' : 'text-bg-danger'}">${r.net > 0 ? '+' : ''}${r.net}</span></div>
+    <div class="progress-stacked" style="height:20px">
+      <div class="progress" style="width:${r.pro / max * 100}%"><div class="progress-bar bg-success">${r.pro || ''}</div></div>
+      <div class="progress" style="width:${r.con / max * 100}%"><div class="progress-bar bg-danger">${r.con || ''}</div></div>
+    </div></div>`).join('') +
+    `<p class="text-secondary small mb-0">${tie ? 'Dead heat. Try the coin flip.' : 'Score = pro weights minus con weights.'}</p>`;
+  $('#coinRes').textContent = '';
+  $('#flipBtn').classList.toggle('d-none', rows.length < 2);
+  $('#flipBtn').onclick = () => {
+    $('#coinRes').innerHTML = '<span class="coin">🪙</span>';
+    setTimeout(() => {
+      const p = rows[Math.random() < .5 ? 0 : 1];
+      $('#coinRes').innerHTML = `🪙 Coin says <strong>${esc(p.o.text)}</strong>.<br>Relieved or bummed? That reaction is your real answer.`;
+      unlock('flip', 'Trust Your Gut', '🪙');
+    }, 900);
+  };
+  bootstrap.Modal.getOrCreateInstance('#vModal').show();
+  confetti(120);
+  if (!S.ach.includes('verdict')) { unlock('verdict', 'Judgment Day', '⚖️'); addXP(20, 'First verdict'); }
+}
+
+/* ---------- events ---------- */
+board.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || e.target.isContentEditable) return;
+  const el = e.target.closest('.node'), eg = e.target.closest('.edge');
+  if (el && e.target.closest('.wt')) {
+    const n = byId(el.dataset.id); n.w = (n.w || 3) % 5 + 1; render(); persist(); return;
+  }
+  if (el) {
+    const id = el.dataset.id;
+    if (connectFrom) return tryConnect(id);
+    select({kind: 'node', id});
+    const n = byId(id);
+    drag = {type: 'node', n, el, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y, moved: false};
+    return;
+  }
+  if (connectFrom) { cancelConnect(); return; }
+  if (eg) { select({kind: 'edge', id: eg.dataset.id}); return; }
+  select(null);
+  drag = {type: 'pan', sx: e.clientX, sy: e.clientY, sl: viewport.scrollLeft, st: viewport.scrollTop};
+});
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+  if (drag.type === 'pan') { viewport.scrollLeft = drag.sl - dx; viewport.scrollTop = drag.st - dy; return; }
+  if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+  drag.moved = true; drag.el.classList.add('dragging');
+  drag.n.x = Math.max(0, drag.ox + dx); drag.n.y = Math.max(0, drag.oy + dy);
+  drag.el.style.left = drag.n.x + 'px'; drag.el.style.top = drag.n.y + 'px';
+  drawEdges();
+});
+addEventListener('pointerup', () => {
+  if (drag && drag.type === 'node' && drag.moved) { drag.el.classList.remove('dragging'); persist(); }
+  drag = null;
+});
+board.addEventListener('dblclick', e => {
+  const el = e.target.closest('.node');
+  if (el && !e.target.closest('.wt')) startEdit(el);
+});
+addEventListener('keydown', e => {
+  if (e.target.isContentEditable || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if (e.key === 'Escape') { cancelConnect(); select(null); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selected) { e.preventDefault(); delSelected(); }
+});
+$('#bar').addEventListener('click', e => {
+  const a = e.target.closest('[data-act]');
+  if (a && a.dataset.act !== 'type') act(a.dataset.act);
+});
+$('#bar').addEventListener('change', e => {
+  if (e.target.dataset.act !== 'type' || !selected) return;
+  const n = byId(selected.id); n.type = e.target.value; n.w = n.w || 3;
+  render(); persist(); toast(`Now a ${TYPES[n.type].label}`, TYPES[n.type].icon);
+});
+$('#adders').addEventListener('click', e => { const b = e.target.closest('[data-add]'); if (b) addNode(b.dataset.add); });
+$('#verdictBtn').addEventListener('click', verdict);
+$('#file').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  f.text().then(t => {
+    const d = JSON.parse(t);
+    if (!Array.isArray(d.nodes) || !Array.isArray(d.edges)) throw 0;
+    S.nodes = d.nodes; S.edges = d.edges;
+    S.seq = [...d.nodes, ...d.edges].reduce((m, x) => Math.max(m, parseInt(String(x.id).slice(1)) || 0), 0) + 1;
+    selected = null; render(); persist(); toast('Imported', '📥');
+  }).catch(() => toast('Not a valid Decision Map file', '⚠️')).finally(() => e.target.value = '');
+});
+document.querySelector('.dropdown-menu').addEventListener('click', e => {
+  const m = e.target.closest('[data-menu]')?.dataset.menu;
+  if (m === 'help') bootstrap.Modal.getOrCreateInstance('#hModal').show();
+  if (m === 'import') $('#file').click();
+  if (m === 'export') {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({nodes: S.nodes, edges: S.edges, seq: S.seq}, null, 2)], {type: 'application/json'}));
+    a.download = 'decision-map.json'; a.click(); URL.revokeObjectURL(a.href); toast('Exported', '📤');
+  }
+  if (m === 'sample' && confirm('Replace the board with the sample?')) { Object.assign(S, template()); selected = null; render(); persist(); }
+  if (m === 'clear' && confirm('Clear the whole board?')) { S.nodes = []; S.edges = []; selected = null; render(); persist(); }
+});
+
+hud(); render();
+addEventListener('load', drawEdges);
+if (!localStorage.getItem('decisionMap.seen')) {
+  try { localStorage.setItem('decisionMap.seen', '1'); } catch {}
+  toast('Double-click a card to edit. Menu > How to use for tips.', '👋');
+}
+</script>
+</body>
+</html>
